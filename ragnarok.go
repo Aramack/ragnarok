@@ -7,14 +7,18 @@ import (
   "time"
   "os"
   "bufio"
+  "strconv"
+  "encoding/json"
+
+  "github.com/gorilla/mux"
 )
 
 
 func http_get(url string) {
   request , err := http.NewRequest(
     "GET",
-	url,
-	nil,
+  	url,
+	  nil,
   )
   if (err != nil) {
     return
@@ -40,13 +44,13 @@ func http_request_worker(url_chan <-chan string, finished_chan chan<- bool) {
 }
 
 func http_load_balancer(
-    url_chan <-chan string, 
+    url_chan <-chan string,
     finished_chan chan<- bool,
     worker_pool_size int) {
   //create workers
   var worker_url_channels = make([]chan string, worker_pool_size)
   var worker_finished_channels = make([]chan bool, worker_pool_size)
-  
+
   for i := range worker_url_channels {
     worker_url_channels[i] = make(chan string)
     worker_finished_channels[i] = make(chan bool)
@@ -54,7 +58,7 @@ func http_load_balancer(
   for index, worker_url_channel := range worker_url_channels{
     go http_request_worker(worker_url_channel, worker_finished_channels[index])
   }
-  
+
   more_urls := true
   for more_urls{
     for _, worker_url_channel := range worker_url_channels {
@@ -84,24 +88,32 @@ func read_url_source(raw_url_chan chan<- string, file_path string) {
   close(raw_url_chan)
 }
 
-func main() {
-  load_balancer_channel := make(chan string)
-  finished_chan := make(chan bool)
-  go http_load_balancer(load_balancer_channel, finished_chan, 4)
+func apiTrafficCreate(w http.ResponseWriter, req *http.Request){
+  params := mux.Vars(req)
+  loadBalancerChannel := make(chan string)
+  finishedChannel := make(chan bool)
 
-  raw_url_chan := make(chan string)
-  
-  go read_url_source(raw_url_chan, "/tmp/test_url")
-  
-  for {
-    raw_url, more := <- raw_url_chan
-    if more {
-      load_balancer_channel <- raw_url
-    } else {
-      close(load_balancer_channel)
-      break
-    }
-  }
-  <-finished_chan
-  fmt.Println("Main thread finished")
+  threadCount, _ := strconv.Atoi(params["threadCount"])
+  go http_load_balancer(loadBalancerChannel, finishedChannel, threadCount)
+
+  //for _, url := range params["targetURL"] {
+  //  loadBalancerChannel <- url
+  //}
+
+  //Close the channel to the load balancer to indicate no more requests incoming.
+  close(loadBalancerChannel)
+  //Wait for the load balancer to tell us it has handled all the requests.
+  <-finishedChannel
+
+  returnJSON := make(map[string]int)
+  returnJSON["consumerID"] = 1
+
+  json.NewEncoder(w).Encode(returnJSON)
+}
+
+
+func main() {
+  api := mux.NewRouter()
+  api.HandleFunc("/api/traffic", apiTrafficCreate).Methods("POST")
+  http.ListenAndServe(":2626", api)
 }
