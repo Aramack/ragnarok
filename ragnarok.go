@@ -4,30 +4,37 @@ package main
 import (
   "fmt"
   "net/http"
-  "time"
   "os"
   "bufio"
-  "strconv"
   "encoding/json"
 
   "github.com/gorilla/mux"
 )
 
+type Traffic struct {
+  ID          int      `json:"id,omitempty"`
+  ThreadCount int      `json:"threadcount,omitempty"`
+  URL         []string `json:"url,omitempty"`
+}
 
 func http_get(url string) {
-  request , err := http.NewRequest(
+  fmt.Println("Requesting: " + url)
+  request, err := http.NewRequest(
     "GET",
-  	url,
-	  nil,
+    url,
+    nil,
   )
   if (err != nil) {
     return
   }
   client := &http.Client{
-    Timeout: time.Second * 30,
+    //Timeout: time.Second * 30,
   }
   resp, err := client.Do(request)
-  resp.Body.Close()
+  if err != nil {
+    return
+  }
+  defer resp.Body.Close()
 }
 
 func http_request_worker(url_chan <-chan string, finished_chan chan<- bool) {
@@ -89,16 +96,18 @@ func read_url_source(raw_url_chan chan<- string, file_path string) {
 }
 
 func apiTrafficCreate(w http.ResponseWriter, req *http.Request){
-  params := mux.Vars(req)
+  //params := mux.Vars(req)
+  var traffic Traffic
+  _ = json.NewDecoder(req.Body).Decode(&traffic)
+
   loadBalancerChannel := make(chan string)
   finishedChannel := make(chan bool)
 
-  threadCount, _ := strconv.Atoi(params["threadCount"])
-  go http_load_balancer(loadBalancerChannel, finishedChannel, threadCount)
-
-  //for _, url := range params["targetURL"] {
-  //  loadBalancerChannel <- url
-  //}
+  go http_load_balancer(loadBalancerChannel, finishedChannel, traffic.ThreadCount)
+  fmt.Println(traffic.ThreadCount)
+  for _, url := range traffic.URL {
+    loadBalancerChannel <- url
+  }
 
   //Close the channel to the load balancer to indicate no more requests incoming.
   close(loadBalancerChannel)
@@ -110,7 +119,6 @@ func apiTrafficCreate(w http.ResponseWriter, req *http.Request){
 
   json.NewEncoder(w).Encode(returnJSON)
 }
-
 
 func main() {
   api := mux.NewRouter()
