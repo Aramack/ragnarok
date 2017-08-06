@@ -1,10 +1,11 @@
 package model
-
 import (
   "fmt"
   "net/http"
   "time"
 )
+
+var headers map[string]string
 
 // httpGet sends an http get request to the url parameter.
 func httpGet(url string) {
@@ -17,9 +18,16 @@ func httpGet(url string) {
   if (err != nil) {
     return
   }
+
+  // Iterate over the http requests headers map and add set each.
+  for httpHeaderKey, httpHeaderValue := range headers {
+    request.Header.Set(httpHeaderKey, httpHeaderValue)
+  }
+
   client := &http.Client{
     Timeout: time.Second * 30,
   }
+  //Golang will follow 300 redirects be default.
   resp, err := client.Do(request)
   if err != nil {
     return
@@ -42,13 +50,16 @@ func httpRequestWorker(urlChan <-chan string, finishedChan chan<- bool) {
   }
 }
 
-// httpLoadBalancer is a function that takes a list of URLs from urlChan
+// HTTPLoadBalancer is a function that takes url strings from urlChan
 // and distributes them between workerPoolSize number of threads.
-// returns when urlChan is closed.
-func HttpLoadBalancer(
+// Returns when urlChan is closed. Custom http request headers can be specified
+// in the httpRequestHeaders map parameter
+func HTTPLoadBalancer(
     urlChan <-chan string,
     finishedChan chan<- bool,
-    workerPoolSize int) {
+    workerPoolSize int,
+    httpRequestHeaders map[string]string) {
+  headers = httpRequestHeaders
   //create workers
   var workerUrlChannels = make([]chan string, workerPoolSize)
   var workerFinishedChannels = make([]chan bool, workerPoolSize)
@@ -61,7 +72,7 @@ func HttpLoadBalancer(
     go httpRequestWorker(workerUrlChannels, workerFinishedChannels[index])
   }
 
-  //
+  //While the workerUrlChannels has new URLs, send them to the a worker.
   moreUrls := true
   for moreUrls{
     for _, workerUrlChannel := range workerUrlChannels {
@@ -73,6 +84,8 @@ func HttpLoadBalancer(
       }
     }
   }
+
+  //Wait for the workers to finish.
   for index, workerFinishedChannel := range workerFinishedChannels {
     close(workerUrlChannels[index])
     <-workerFinishedChannel

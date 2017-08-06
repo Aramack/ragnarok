@@ -20,9 +20,11 @@ var HealthcheckStatus bool = false
 var apiTrafficManager TrafficManager
 
 type Traffic struct {
-  ID          int      `json:"id,omitempty"`
-  ThreadCount int      `json:"threadcount,omitempty"`
-  URL         []string `json:"url,omitempty"`
+  ID          int               `json:"id,omitempty"`
+  ThreadCount int               `json:"threadcount,omitempty"`
+  URL         []string          `json:"url,omitempty"`
+  Iteration   int               `json:"iteration,omitempty"`
+  Headers     map[string]string `json:"headers,omitempty"`
 }
 
 type TrafficManager struct {
@@ -31,12 +33,11 @@ type TrafficManager struct {
   sync.Mutex
 }
 
-// registerTraffic takes a user defined traffic request and registers it in the master class.
+// registerTraffic takes a user defined traffic request and registers it in the manager.
 func registerTraffic(traffic *Traffic) {
   apiTrafficManager.Lock()
   traffic.ID = apiTrafficManager.CurrentID
   apiTrafficManager.CurrentID++
-  //@todo: Figure out how to add the new struct to the manager's list
   apiTrafficManager.TrafficList = append(apiTrafficManager.TrafficList, traffic)
   apiTrafficManager.Unlock()
 }
@@ -53,11 +54,14 @@ func trafficDispatcher(traffic *Traffic, consumerIDChannel chan<- int) {
   consumerIDChannel <- traffic.ID
   close(consumerIDChannel)
 
-  go model.HttpLoadBalancer(loadBalancerChannel, finishedChannel, traffic.ThreadCount)
-  fmt.Println(traffic.ThreadCount)
-  for _, url := range traffic.URL {
-    loadBalancerChannel <- url
+  go model.HTTPLoadBalancer(loadBalancerChannel, finishedChannel, traffic.ThreadCount, traffic.Headers)
+  fmt.Println("New dispatcher running with " + strconv.Itoa(traffic.ThreadCount) + " threads")
+  for itt := 0; itt < traffic.Iteration; itt++ {
+    for _, url := range traffic.URL {
+      loadBalancerChannel <- url
+    }
   }
+
 
   //Close the channel to the load balancer to indicate no more requests incoming.
   close(loadBalancerChannel)
@@ -68,9 +72,18 @@ func trafficDispatcher(traffic *Traffic, consumerIDChannel chan<- int) {
 
 // ApiTrafficCreate reads the request, creates a dispatcher and writes the result to w.
 func ApiTrafficCreate(w http.ResponseWriter, req *http.Request){
+  setResponseHeaders(w)
+
   //Create traffic struct based upon the JSON POST data:
   var traffic Traffic
-  _ = json.NewDecoder(req.Body).Decode(&traffic)
+  err := json.NewDecoder(req.Body).Decode(&traffic)
+  if err != nil {
+    //Bad request
+    w.WriteHeader(http.StatusBadRequest)
+    responseMessage, _ := json.Marshal(map[string]string{"error": "Malformed JSON", "errormsg": err.Error()})
+    w.Write(responseMessage)
+    return
+  }
 
   //Create a traffic dispatcher:
   workerIDChannel := make(chan int)
@@ -82,16 +95,17 @@ func ApiTrafficCreate(w http.ResponseWriter, req *http.Request){
   //Return the workerID to the consumerID:
   returnJSON := make(map[string]int)
   returnJSON["workerID"] = workerID
+  w.WriteHeader(http.StatusOK)
   json.NewEncoder(w).Encode(returnJSON)
 }
 
 // ApiTraffic returns the traffic object that was returned
 func ApiTraffic(w http.ResponseWriter, req *http.Request){
+  setResponseHeaders(w)
   params := mux.Vars(req)
   requestedID, err := strconv.Atoi(params["id"])
   if err != nil {
     //Bad request
-    w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(http.StatusBadRequest)
     responseMessage, _ := json.Marshal(map[string]string{"error": "Invalid traffic ID"})
     w.Write(responseMessage)
@@ -107,14 +121,12 @@ func ApiTraffic(w http.ResponseWriter, req *http.Request){
     }
   }
   //Not found:
-  w.Header().Set("Content-Type", "application/json")
   w.WriteHeader(http.StatusNotFound)
 }
 
 // Healthcheck to check if the service is running correctly.
 func Healthcheck(w http.ResponseWriter, req *http.Request){
-  w.Header().Set("Connection", "close")
-  w.Header().Set("Server", runtime.Version())
+  setResponseHeaders(w)
   if (!HealthcheckStatus) {
     w.WriteHeader(http.StatusServiceUnavailable)
   } else {
@@ -122,11 +134,12 @@ func Healthcheck(w http.ResponseWriter, req *http.Request){
   }
 }
 
+// HealthcheckAction is used to change the status of the healthcheck.
 func HealthcheckAction(w http.ResponseWriter, req *http.Request){
+  setResponseHeaders(w)
   params := mux.Vars(req)
   action := params["action"]
-  w.Header().Set("Connection", "close")
-  w.Header().Set("Server", runtime.Version())
+
   if (action == "up") {
     HealthcheckStatus = true
   } else if (action == "down") {
@@ -137,6 +150,13 @@ func HealthcheckAction(w http.ResponseWriter, req *http.Request){
   } else {
     w.WriteHeader(http.StatusOK)
   }
+}
+
+// setResponseHeaders is used to set the default http response headers.
+func setResponseHeaders(rw http.ResponseWriter){
+  rw.Header().Set("Connection", "close") //Connection closed
+  rw.Header().Set("Server", runtime.Version()) //Golang version
+  rw.Header().Set("Content-Type", "application/json") //JSon Response
 }
 
 // init function for the api controller.

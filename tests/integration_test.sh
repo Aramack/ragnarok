@@ -6,9 +6,9 @@ curl -X HEAD \
   -vfs14
 
 if [ $? -ne 0 ]; then
-  echo "  Healthcheck failed..."
+  echo -e "\tHealthcheck failed..." >&2
 else
-  echo "  Healthcheck succeeded..."
+  echo -e "\tHealthcheck succeeded..."
 fi
 
 #Ensure that the healthcheck actions work
@@ -17,9 +17,9 @@ curl -X POST \
   "localhost:2626/healthcheck/down" \
   -vfs14
 if [ $? -ne 0 ]; then
-  echo "  healthcheck down succeeded..."
+  echo -e "\thealthcheck down succeeded..."
 else
-  echo "  healthcheck down failed..."
+  echo -e "\thealthcheck down failed..." >&2
 fi
 
 echo "Testing healthcheck actions (up):"
@@ -27,9 +27,9 @@ curl -X POST \
   "localhost:2626/healthcheck/up" \
   -vfs14
 if [ $? -ne 0 ]; then
-  echo "  healthcheck up failed..."
+  echo -e "\thealthcheck up failed..." >&2
 else
-  echo "  healthcheck up succeeded..."
+  echo -e "\thealthcheck up succeeded..."
 fi
 
 #Ensure that we can create sample traffic
@@ -38,21 +38,27 @@ curl -X POST \
   "localhost:2626/api/traffic" \
   -H "Content-Type: application/json" \
   -d '{
-       "threadcount":3,
-       "url":
-         [
+        "headers":
+          {
+            "cookie":"server=Staging1",
+            "User-Agent":"Go-http-client/1.1-infratraffic"
+          },
+        "iteration":2,
+        "threadcount":3,
+        "url":
+          [
            "https://google.com",
            "https://example.com",
            "https://msn.com",
            "https://bing.com",
-           "https://twitch.tv",
-         ]
+           "https://twitch.tv"
+          ]
       }' \
   -vfs14m 2
 if [ $? -ne 0 ]; then
-  echo "  Traffic creation failed..."
+  echo -e "\tTraffic creation failed..." >&2
 else
-  echo "  Traffic creation success..."
+  echo -e "\tTraffic creation success..."
 fi
 
 #Esnsure that we can retriece a record
@@ -61,8 +67,8 @@ curl -X GET \
   "localhost:2626/api/traffic/0" \
   -vfs14
 if [ $? -ne 0 ]; then
-  echo "  Traffic get failed..."
+  echo -e "\tTraffic get failed..." >&2
 else
-  echo "  Traffic get success..."
+  echo -e "\tTraffic get success..."
 fi
 
